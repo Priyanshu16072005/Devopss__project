@@ -1,0 +1,129 @@
+# =============================================================
+#  Food For All - DevOps stack: Puppet + load-balanced web cluster + Nagios
+#
+#  Always used ON TOP of docker-compose.yml:
+#    docker compose -f docker-compose.yml -f docker-compose.devops.yml up -d --build
+#  (or simply: make devops)
+#
+#    http://localhost:8080        app through HAProxy -> web1/web2 (Puppet-managed)
+#    http://localhost:8080/node/  which web server answered
+#    http://localhost:8404/stats  HAProxy statistics
+#    http://localhost:8081/nagios Nagios (user nagiosadmin / see .env)
+#
+#                       +--------------------+
+#                       |   puppet (master)  |  CA + catalogs on :8140
+#                       +---------+----------+
+#                  pull config    |   every 60 seconds
+#            +--------------------+--------------------+
+#            v                    v                    v
+#     +------------+       +------------+       +------------+
+#     |     lb     | ----> |    web1    |       |    web2    |
+#     |  HAProxy   | ----> |   Nginx    |       |   Nginx    |
+#     +------------+       +-----+------+       +-----+------+
+#                                +---------+----------+
+#                                          v
+#                          client (React) -> server (API) -> mongo
+#
+#     nagios: checks that every box above is running
+# =============================================================
+
+x-agent: &agent
+  build: ./puppet/agent
+  image: ${DOCKER_USER:-priyanshu8948}/food-for-all-puppet-agent:${TAG:-latest}
+  init: true                         # tini as PID 1: reaps nginx/haproxy child processes
+  restart: unless-stopped
+  depends_on:
+    - puppet
+  networks: [foodnet]
+
+services:
+
+  # ---------- Puppet master (OpenVox Server) with built-in CA ----------
+  puppet:
+    image: voxpupuli/openvoxserver:8
+    hostname: puppet
+    restart: unless-stopped
+    environment:
+      USE_OPENVOXDB: "false"                       # no PuppetDB needed
+      AUTOSIGN: /etc/puppetlabs/autosign/autosign.conf
+      CA_ALLOW_DUPLICATE_CERTS: "true"             # lets a rebuilt agent re-register
+      DNS_ALT_NAMES: puppet,puppet.foodforall.local
+      OPENVOXSERVER_ENVIRONMENT_TIMEOUT: "0"       # pick up code edits immediately
+      OPENVOXSERVER_JAVA_ARGS: "-Xms512m -Xmx512m"
+    volumes:
+      - ./puppet/code:/etc/puppetlabs/code                     # manifests and modules
+      - ./puppet/server/autosign.conf:/etc/puppetlabs/autosign/autosign.conf:ro
+      - puppet-ca:/etc/puppetlabs/puppetserver/ca              # Certificate Authority
+      - puppet-ssl:/etc/puppetlabs/puppet/ssl
+    networks:
+      foodnet:
+        aliases: [puppet.foodforall.local]
+
+  # ---------- Puppet agents (PULL model) ----------
+  web1:
+    <<: *agent
+    hostname: web1
+    domainname: foodforall.local
+    environment:
+      CERTNAME: web1.foodforall.local
+      RUNINTERVAL: "60"
+    volumes:
+      - web1-ssl:/etc/puppetlabs/puppet/ssl
+    networks:
+      foodnet:
+        aliases: [web1.foodforall.local]
+
+  web2:
+    <<: *agent
+    hostname: web2
+    domainname: foodforall.local
+    environment:
+      CERTNAME: web2.foodforall.local
+      RUNINTERVAL: "60"
+    volumes:
+      - web2-ssl:/etc/puppetlabs/puppet/ssl
+    networks:
+      foodnet:
+        aliases: [web2.foodforall.local]
+
+  lb:
+    <<: *agent
+    hostname: lb
+    domainname: foodforall.local
+    environment:
+      CERTNAME: lb.foodforall.local
+      RUNINTERVAL: "60"
+    volumes:
+      - lb-ssl:/etc/puppetlabs/puppet/ssl
+    ports:
+      - "8080:80"        # the load-balanced app
+      - "8404:8404"      # HAProxy stats
+    networks:
+      foodnet:
+        aliases: [lb.foodforall.local]
+
+  # ---------- Nagios Core (compiled from source) ----------
+  nagios:
+    build: ./nagios
+    image: ${DOCKER_USER:-priyanshu8948}/food-for-all-nagios:${TAG:-latest}
+    hostname: nagios
+    restart: unless-stopped
+    environment:
+      NAGIOSADMIN_PASSWORD: ${NAGIOSADMIN_PASSWORD:-nagiosadmin}
+    volumes:
+      - nagios-var:/usr/local/nagios/var      # state, retention, comments, downtimes
+    ports:
+      - "8081:80"
+    networks: [foodnet]
+
+volumes:
+  puppet-ca:
+  puppet-ssl:
+  web1-ssl:
+  web2-ssl:
+  lb-ssl:
+  nagios-var:
+
+networks:
+  foodnet:
+    name: foodnet

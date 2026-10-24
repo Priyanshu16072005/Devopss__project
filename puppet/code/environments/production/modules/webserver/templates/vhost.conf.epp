@@ -1,0 +1,30 @@
+# Managed by Puppet (webserver/templates/vhost.conf.epp)
+server {
+    listen 80 default_server;
+    server_name _;
+
+    # Shows which web server the load balancer picked
+    add_header X-Served-By <%= $facts['networking']['hostname'] %> always;
+
+    # Health check used by HAProxy and Nagios
+    location = /health {
+        default_type text/plain;
+        return 200 "OK <%= $facts['networking']['hostname'] %>\n";
+    }
+
+    # Page deployed by Puppet with this server's details
+    location /node/ {
+        alias /var/www/node/;
+        index index.html;
+    }
+
+    # Everything else goes to the Food For All app
+    location / {
+        resolver 127.0.0.11 valid=30s;   # Docker's DNS
+        set $app http://client:80;
+        proxy_pass $app;
+        proxy_set_header Host            $host;
+        proxy_set_header X-Real-IP       $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}

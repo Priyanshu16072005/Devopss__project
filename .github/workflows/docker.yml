@@ -2,28 +2,60 @@ name: Docker CI/CD
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  DOCKER_USER: priyanshu8948
 
 jobs:
 
-  docker:
-
+  # ---------- 1. Check the Puppet code for syntax errors ----------
+  puppet:
     runs-on: ubuntu-latest
-
     steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Install Puppet
+        run: gem install puppet -v '~> 8.0' --no-document
+      - name: Syntax check
+        working-directory: puppet/code/environments/production
+        run: |
+          puppet parser validate $(find . -name '*.pp')
+          for t in $(find . -name '*.epp'); do puppet epp validate "$t"; done
 
-      - name: Checkout Source
-        uses: actions/checkout@v4
+  # ---------- 2. Build every image, 3. push it on main ----------
+  docker:
+    needs: puppet
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { name: server,       context: ./server }
+          - { name: client,       context: ./client }
+          - { name: puppet-agent, context: ./puppet/agent }
+          - { name: nagios,       context: ./nagios }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
+          # Use a Docker Hub *access token* here, not your account password
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build Docker Image
-        run: docker build -t priyanshu8948/food-for-all ./server
-
-      - name: Push Docker Image
-        run: docker push priyanshu8948/food-for-all
+      # Pull requests only build; pushes to main also publish the image
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ env.DOCKER_USER }}/food-for-all-${{ matrix.name }}:latest

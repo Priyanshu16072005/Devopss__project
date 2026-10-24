@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# Real secrets and generated state
+k8s/secret.yml
+nagios/htpasswd.users

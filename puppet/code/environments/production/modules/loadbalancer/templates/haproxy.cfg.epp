@@ -1,0 +1,35 @@
+<%- | Array[String] $backends | -%>
+# Managed by Puppet (loadbalancer/templates/haproxy.cfg.epp) - do not edit by hand
+global
+    log stdout format raw local0
+
+defaults
+    mode    http
+    log     global
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+    # Start even if a web server is not up yet
+    default-server init-addr last,libc,none
+
+# Docker's DNS, so restarted containers are found again
+resolvers docker
+    nameserver dns 127.0.0.11:53
+
+frontend http_in
+    bind *:80
+    default_backend web_cluster
+
+backend web_cluster
+    balance roundrobin
+    option  httpchk GET /health
+<% $backends.each |$host| { -%>
+    server <%= $host.split('\.')[0] %> <%= $host %>:80 check resolvers docker
+<% } -%>
+
+# Statistics page: http://localhost:8404/stats
+frontend stats
+    bind *:8404
+    stats enable
+    stats uri /stats
+    stats refresh 5s

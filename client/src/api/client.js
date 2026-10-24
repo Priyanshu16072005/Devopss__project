@@ -1,4 +1,6 @@
-const API_BASE = `${import.meta.env.VITE_API_URL}/api`;
+// Empty VITE_API_URL = same origin (Vite proxy in dev, Nginx proxy in Docker).
+// Set it only when the API lives on another domain (e.g. Vercel + Render).
+const API_BASE = `${import.meta.env.VITE_API_URL || ''}/api`;
 
 function getToken() {
   return localStorage.getItem('token');

@@ -1,0 +1,7 @@
+==============================================================
+  Food For All :: <%= $facts['networking']['fqdn'] %>
+  OS ... <%= $facts['os']['name'] %> <%= $facts['os']['release']['full'] %>
+  IP ... <%= $facts['networking']['ip'] %>
+
+  Managed by Puppet - manual changes will be overwritten
+==============================================================
